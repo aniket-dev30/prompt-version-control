@@ -330,6 +330,97 @@ Respond with ONLY valid JSON, no markdown, no extra text:
     res.status(500).json({ error: 'Failed to generate changelog. Please try again.' });
   }
 };
+// ── RAG-based prompt improvement suggestions ──────────────────────────────────
+
+const suggestImprovements = async (req, res) => {
+  try {
+    const { promptId } = req.params;
+    const { draft_system_prompt, draft_user_prompt, retrieved_examples } = req.body;
+    const userId = req.user.id;
+
+    if (!draft_user_prompt || !draft_user_prompt.trim()) {
+      return res.status(400).json({ error: 'draft_user_prompt is required.' });
+    }
+
+    // Verify access (promptId may be a real prompt being edited, or omitted for brand new prompts)
+    if (promptId && promptId !== 'new') {
+      const promptCheck = await query(
+        `SELECT id FROM prompts WHERE id = $1 AND (user_id = $2 OR is_public = TRUE)`,
+        [promptId, userId]
+      );
+      if (promptCheck.rowCount === 0) {
+        return res.status(404).json({ error: 'Prompt not found or access denied.' });
+      }
+    }
+
+    // Validate retrieved_examples shape (sent from frontend after client-side retrieval)
+    const examples = Array.isArray(retrieved_examples) ? retrieved_examples.slice(0, 3) : [];
+
+    const examplesText = examples.length > 0
+      ? examples.map((ex, i) =>
+          `EXAMPLE ${i + 1} (similarity: ${Math.round((ex.score || 0) * 100)}%):\n` +
+          `Prompt name: ${ex.name || 'Untitled'}\n` +
+          `System: ${ex.system_prompt || '(none)'}\n` +
+          `User: ${ex.user_prompt || ''}`
+        ).join('\n\n')
+      : 'No similar past prompts were found.';
+
+    const ragPrompt = `You are an expert prompt engineer helping a user improve a draft prompt by learning from their own past prompt-writing patterns.
+
+DRAFT PROMPT BEING WRITTEN:
+System: ${draft_system_prompt || '(none)'}
+User: ${draft_user_prompt}
+
+RETRIEVED SIMILAR PROMPTS FROM THE USER'S OWN HISTORY:
+${examplesText}
+
+Based on patterns you notice in the user's past prompts (e.g. how they specify tone, constraints, output format, or variables), suggest 2-4 specific, actionable improvements to the draft prompt. Reference the retrieved examples when relevant. Do not rewrite the whole prompt — give targeted suggestions.
+
+Respond with ONLY valid JSON, no markdown, no extra text:
+{
+  "suggestions": [
+    { "suggestion": "<specific actionable suggestion>", "based_on": "<which example or pattern this came from, or 'general best practice' if none>" }
+  ]
+}`;
+
+    const model = genAI.getGenerativeModel({
+      model: 'gemini-3.1-flash-lite',
+      generationConfig: { temperature: 0.4, maxOutputTokens: 500 },
+    });
+
+    const geminiResult = await model.generateContent(ragPrompt);
+    let rawText = geminiResult.response.text();
+
+    rawText = rawText.replace(/```(?:json)?\s*/gi, '').replace(/```/g, '').trim();
+    const start = rawText.indexOf('{');
+    const end   = rawText.lastIndexOf('}');
+    if (start === -1 || end === -1 || end <= start) {
+      return res.status(502).json({ error: 'Suggestion service returned an unreadable response.' });
+    }
+
+    const parsed = JSON.parse(rawText.slice(start, end + 1));
+    const suggestions = Array.isArray(parsed.suggestions) ? parsed.suggestions.slice(0, 5) : [];
+
+    res.json({
+      suggestions: suggestions.map(s => ({
+        suggestion: String(s.suggestion || ''),
+        based_on: String(s.based_on || 'general best practice'),
+      })),
+      retrieved_count: examples.length,
+    });
+  } catch (err) {
+    console.error('❌ Suggest improvements error:', err.message);
+
+    if (err.message?.includes('API_KEY')) {
+      return res.status(401).json({ error: 'Invalid Gemini API key.' });
+    }
+    if (err.message?.includes('quota')) {
+      return res.status(429).json({ error: 'Gemini API quota exceeded.' });
+    }
+
+    res.status(500).json({ error: 'Failed to generate suggestions. Please try again.' });
+  }
+};
 
 // ── Delete a version ──────────────────────────────────────────────────────────
 
@@ -372,4 +463,4 @@ const deleteVersion = async (req, res) => {
   }
 };
 
-module.exports = { createVersion, getVersions, getVersion, diffVersions, deleteVersion, generateChangelog };
+module.exports = { createVersion, getVersions, getVersion, diffVersions, deleteVersion, generateChangelog, suggestImprovements };

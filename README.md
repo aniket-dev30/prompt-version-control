@@ -225,4 +225,4 @@ prompt-version-control/
 Built by **Aniket Jha** — final-year B.Tech CSE (AI specialization) student.
 
 - GitHub: [@aniket-dev30](https://github.com/aniket-dev30)
-- LinkedIn: [aniketjha](https://linkedin.com/in/aniketjha-732a77258)
+- LinkedIn: [aniketjha](https://linkedin.com/in/aniketjha-732a77258)        

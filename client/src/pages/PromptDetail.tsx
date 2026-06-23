@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { promptsAPI, versionsAPI, executionAPI, evaluationAPI } from '../lib/api'
+import api, { promptsAPI, versionsAPI, executionAPI, evaluationAPI } from '../lib/api'
 
 // ── Icons ──────────────────────────────────────────────────────────────────────
 
@@ -308,9 +308,84 @@ function NewVersionModal({ promptId, baseVersion, onClose, onCreated }: NewVersi
   const [maxTokens, setMaxTokens] = useState(baseVersion?.max_tokens || 1000)
   const [variables, setVariables] = useState<Record<string, string>>(baseVersion?.variables || {})
   const [varInput, setVarInput] = useState('')
-  const [error, setError] = useState('')
+  const [suggestions, setSuggestions] = useState<any[]>([])
+  const [showSuggestions, setShowSuggestions] = useState(false)
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false)
+  const [suggestionsError, setSuggestionsError] = useState('')
+  const [error, setError] = useState('') 
 
   const queryClient = useQueryClient()
+  const handleGetSuggestions = async () => {
+  console.log('Get Suggestions clicked')
+  setSuggestionsLoading(true)
+  setSuggestionsError('')
+
+  try {
+    const allVersionsRes = await versionsAPI.getAll(promptId)
+    console.log('Versions response', allVersionsRes)
+
+    const allVersions = allVersionsRes.data.versions || []
+
+    console.log('1 - Before import')
+
+    const { embedText, cosineSimilarity } = await import('../lib/embeddings')
+
+    console.log('2 - Import successful')
+
+    const draftText = `System: ${systemPrompt}\nUser: ${userPrompt}`
+
+    console.log('3 - Before embedding')
+
+    const draftVector = await embedText(draftText)
+
+    console.log('4 - Draft embedding complete')
+
+    
+    // Score all versions and get top 3
+    const scored = await Promise.all(
+      allVersions.map(async (v: any) => {
+        const vText = `System: ${v.system_prompt || ''}\nUser: ${v.user_prompt}`
+        const vVector = await embedText(vText)
+        return { ...v, score: cosineSimilarity(draftVector, vVector) }
+      })
+    )
+    
+    const similar = scored
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 3)
+    
+    // Call backend
+    const res = await api.post(
+  `/prompts/${promptId}/suggest-improvements`,
+  {
+    draft_system_prompt: systemPrompt.trim() || undefined,
+    draft_user_prompt: userPrompt.trim(),
+    retrieved_examples: similar.map(v => ({
+      id: v.id,
+      name: `v${v.version_number}`,
+      system_prompt: v.system_prompt,
+      user_prompt: v.user_prompt,
+      score: v.score
+    }))
+  }
+)
+console.log('Suggestions Data', res.data)
+
+setSuggestions(res.data.suggestions || [])
+setShowSuggestions(true)
+  } catch (err: any) {
+  console.error('Suggestion Error:', err)
+  console.error('Response:', err?.response?.data)
+
+  setSuggestionsError(
+    err?.response?.data?.error ||
+    err?.message ||
+    'Error fetching suggestions'
+  )
+} finally {
+    setSuggestionsLoading(false)
+  }
+}
 
   const createMutation = useMutation({
     mutationFn: async () => {
@@ -355,6 +430,7 @@ function NewVersionModal({ promptId, baseVersion, onClose, onCreated }: NewVersi
   const handleVariableChange = (key: string, value: string) => {
     setVariables(prev => ({ ...prev, [key]: value }))
   }
+  console.log("Suggestions state:", suggestions);
 
   return (
     <div style={styles.modalOverlay}>
@@ -490,6 +566,77 @@ function NewVersionModal({ promptId, baseVersion, onClose, onCreated }: NewVersi
             </div>
           )}
         </div>
+        {showSuggestions && (
+  <div style={{
+    backgroundColor: '#1f2937',
+    border: '1px solid #374151',
+    borderRadius: '0.5rem',
+    padding: '1rem',
+    marginBottom: '1rem'
+  }}>
+    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+      <h3 style={{ margin: 0, color: '#f3f4f6', fontSize: '0.9rem' }}>
+        💡 AI Suggestions Based on Your Patterns
+      </h3>
+      <button
+        onClick={() => setShowSuggestions(false)}
+        style={{ background: 'none', border: 'none', color: '#9ca3af', cursor: 'pointer' }}
+      >
+        ✕
+      </button>
+    </div>
+    
+    {suggestions.length > 0 ? (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+        {suggestions.map((s, i) => (
+          <div key={i} style={{
+            backgroundColor: '#111827',
+            padding: '0.75rem',
+            borderRadius: '0.4rem',
+            borderLeft: '3px solid #818cf8'
+          }}>
+<h4 style={{
+  margin: '0 0 0.5rem 0',
+  color: '#818cf8',
+  fontSize: '0.85rem'
+}}>
+  {s.title}
+</h4>
+
+<p style={{
+  margin: 0,
+  color: '#e5e7eb',
+  fontSize: '0.8rem',
+  whiteSpace: 'pre-wrap'
+}}>
+  {s.explanation}
+</p>
+          </div>
+        ))}
+      </div>
+    ) : suggestionsError ? (
+      <p style={{ margin: 0, color: '#fca5a5', fontSize: '0.8rem' }}>{suggestionsError}</p>
+    ) : (
+      <p style={{ margin: 0, color: '#9ca3af', fontSize: '0.8rem' }}>
+        Click the button above to get suggestions.
+      </p>
+    )}
+  </div>
+)}
+        <div style={{ ...styles.modalActions, marginBottom: '1rem' }}>
+  <button
+    onClick={handleGetSuggestions}
+    disabled={suggestionsLoading || !userPrompt.trim()}
+    style={{
+      ...styles.primaryBtn,
+      backgroundColor: '#6366f1',
+      opacity: suggestionsLoading || !userPrompt.trim() ? 0.6 : 1,
+      cursor: suggestionsLoading || !userPrompt.trim() ? 'not-allowed' : 'pointer'
+    }}
+  >
+    {suggestionsLoading ? '⏳ Getting suggestions…' : '✨ Get AI Suggestions'}
+  </button>
+</div>
 
         <div style={styles.modalActions}>
           <button
