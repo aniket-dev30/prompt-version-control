@@ -417,6 +417,9 @@ Respond with ONLY valid JSON, no markdown, no extra text:
     if (err.message?.includes('quota')) {
       return res.status(429).json({ error: 'Gemini API quota exceeded.' });
     }
+    if (err.status === 503 || err.message?.includes('503') || err.message?.includes('overloaded') || err.message?.includes('high demand')) {
+      return res.status(503).json({ error: 'Gemini is temporarily overloaded. Please try again in a moment.' });
+    }
 
     res.status(500).json({ error: 'Failed to generate suggestions. Please try again.' });
   }
