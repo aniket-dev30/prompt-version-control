@@ -2,7 +2,7 @@
 
 **Version control for AI prompts — track, compare, optimize, and deploy your LLM prompts like code.**
 
-PromptOps AI is a full-stack platform that brings Git-style version control to prompt engineering. Every prompt is tracked across versions, with semantic diffing, AI-powered quality scoring, auto-generated changelogs, and client-side semantic similarity search — all built on a production-grade Node.js/PostgreSQL backend and a React/TypeScript frontend.
+PromptOps AI is a full-stack platform that brings Git-style version control to prompt engineering. Every prompt is tracked across versions, with structured diffing, AI-powered quality scoring, auto-generated changelogs, a RAG-based suggestion feature, and client-side semantic similarity search — all built on a production-grade Node.js/PostgreSQL backend and a React/TypeScript frontend.
 
 🔗 **Live demo:** [prompt-version-control.netlify.app](https://prompt-version-control.netlify.app)
 
@@ -13,9 +13,10 @@ PromptOps AI is a full-stack platform that brings Git-style version control to p
 Most AI projects call an LLM API and call it done. PromptOps AI goes further — it treats prompt engineering as a discipline that deserves the same rigor as software development:
 
 - **Version control** for prompts, the same way Git tracks code
-- **Semantic diffing** to see exactly what changed between versions
+- **Structured diffing** to see exactly what changed between versions, field by field
 - **AI-powered evaluation** that scores prompt quality on clarity, specificity, structure, and safety
 - **AI-generated changelogs** that summarize what changed and why it matters
+- **RAG-based improvement suggestions** that retrieve a user's own similar past prompts and ground Gemini's suggestions in their personal patterns
 - **Client-side semantic similarity** using real ML inference in the browser — no API calls, no server cost
 
 ---
@@ -33,6 +34,7 @@ Most AI projects call an LLM API and call it done. PromptOps AI goes further —
 - ▶️ **Execute** prompt versions live against Gemini, with variable interpolation
 - 📊 **Evaluate** prompt quality automatically — scored 0–100 across clarity, specificity, structure, and safety, with strengths/improvements feedback
 - 📜 **AI-generated changelogs** — a Gemini-powered summary of what changed between any two versions, plus an "expected impact" assessment
+- 💡 **RAG-based improvement suggestions** — when drafting a new version, the app embeds the draft client-side (Transformers.js), retrieves the user's most similar past versions via cosine similarity, and sends both to Gemini, which returns suggestions explicitly grounded in a specific past version (`based_on: "v1"`) or general best practice when nothing relevant is found
 - 🧬 **Semantic similarity search** — finds related prompts using sentence embeddings computed entirely in the browser via Transformers.js (Xenova/all-MiniLM-L6-v2), with zero server cost
 
 ### Analytics & UX
@@ -49,7 +51,7 @@ Most AI projects call an LLM API and call it done. PromptOps AI goes further —
 - React Router v7
 - TanStack Query (React Query) for server state
 - Zustand for auth state (persisted)
-- Transformers.js for in-browser ML inference
+- Transformers.js for in-browser ML inference (embeddings for similarity search and RAG retrieval)
 - Inline SVG icons, no external icon library
 
 **Backend**
@@ -57,7 +59,7 @@ Most AI projects call an LLM API and call it done. PromptOps AI goes further —
 - PostgreSQL (hosted on Neon — serverless, branchable)
 - JWT authentication with bcrypt password hashing
 - express-validator for input validation
-- Google Gemini API (`gemini-3.1-flash-lite`) for execution, evaluation, and changelog generation
+- Google Gemini API (`gemini-2.5-flash`) for execution, evaluation, changelog generation, and RAG-based suggestions, using structured output (`responseSchema`) to enforce reliable JSON shape
 
 **Infrastructure**
 - Backend deployed on **Render**
@@ -74,9 +76,11 @@ Most AI projects call an LLM API and call it done. PromptOps AI goes further —
 │   (Netlify)            │ ◄─────► │   (Render)             │
 │                        │         │                        │
 │  • Transformers.js     │         │  • JWT auth             │
-│    (runs in-browser)   │         │  • Gemini API calls     │
-└──────────────────────┘         │  • Business logic       │
-                                    └──────────┬───────────┘
+│    (runs in-browser,   │         │  • Gemini API calls     │
+│     embeds drafts +    │         │  • Business logic       │
+│     past versions for  │         │  • RAG suggestion        │
+│     RAG retrieval)      │         │    endpoint (generation) │
+└──────────────────────┘         └──────────┬───────────┘
                                                │
                                                ▼
                                     ┌──────────────────────┐
@@ -88,6 +92,13 @@ Most AI projects call an LLM API and call it done. PromptOps AI goes further —
                                     │   • prompt_shares        │
                                     └──────────────────────┘
 ```
+
+**RAG suggestion flow:**
+1. User drafts a new prompt version (system + user prompt) in the New Version modal
+2. On clicking "Get AI Suggestions," the client embeds the draft using Transformers.js and compares it against embeddings of all past versions for that prompt (cosine similarity, computed in-browser)
+3. The top 3 most similar past versions are sent to the backend along with the draft
+4. The backend builds a grounded prompt and calls Gemini with a `responseSchema` enforcing `{ suggestions: [{ suggestion, based_on }] }`
+5. Gemini returns 2–4 actionable suggestions, each citing a specific retrieved version (e.g. `"v1"`) when grounded, or `"general best practice"` otherwise
 
 ---
 
@@ -118,6 +129,7 @@ POST   /api/prompts
 GET    /api/prompts/:id
 PATCH  /api/prompts/:id
 DELETE /api/prompts/:id
+POST   /api/prompts/:id/suggest-improvements
 
 GET    /api/prompts/:promptId/versions
 POST   /api/prompts/:promptId/versions
@@ -195,6 +207,7 @@ Visit `http://localhost:5173`.
 - **Backend (Render):** set Root Directory to `server`, build command `npm install`, start command `node server.js`. Add all env vars from `.env` above, plus set `CLIENT_URL` to your deployed frontend URL.
 - **Frontend (Netlify):** set Base Directory to `client`, build command `npm run build`, publish directory `client/dist`. Add `VITE_API_URL` pointing to your deployed backend + `/api`.
 - Add a `client/public/_redirects` file containing `/*    /index.html   200` so client-side routes don't 404 on refresh.
+- Note: Gemini's free-tier `gemini-2.5-flash` model occasionally returns `503` errors under high demand. The backend treats these as transient and returns a distinct, user-facing "temporarily overloaded, try again" message rather than a generic failure.
 
 ---
 
@@ -225,4 +238,4 @@ prompt-version-control/
 Built by **Aniket Jha** — final-year B.Tech CSE (AI specialization) student.
 
 - GitHub: [@aniket-dev30](https://github.com/aniket-dev30)
-- LinkedIn: [aniketjha](https://linkedin.com/in/aniketjha-732a77258)        
+- LinkedIn: [aniketjha](https://linkedin.com/in/aniketjha-732a77258)
