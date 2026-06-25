@@ -385,7 +385,28 @@ Respond with ONLY valid JSON, no markdown, no extra text:
 
     const model = genAI.getGenerativeModel({
       model: 'gemini-3.1-flash-lite',
-      generationConfig: { temperature: 0.4, maxOutputTokens: 500 },
+      generationConfig: {
+        temperature: 0.4,
+        maxOutputTokens: 500,
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: 'object',
+          properties: {
+            suggestions: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  suggestion: { type: 'string' },
+                  based_on: { type: 'string' },
+                },
+                required: ['suggestion', 'based_on'],
+              },
+            },
+          },
+          required: ['suggestions'],
+        },
+      },
     });
 
     const geminiResult = await model.generateContent(ragPrompt);
@@ -424,7 +445,6 @@ Respond with ONLY valid JSON, no markdown, no extra text:
     res.status(500).json({ error: 'Failed to generate suggestions. Please try again.' });
   }
 };
-
 // ── Delete a version ──────────────────────────────────────────────────────────
 
 const deleteVersion = async (req, res) => {

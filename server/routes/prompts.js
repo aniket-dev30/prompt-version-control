@@ -95,8 +95,34 @@ router.post('/:id/suggest-improvements', async (req, res) => {
       retrieved_examples = []
     } = req.body;
 
+    if (!draft_user_prompt || !draft_user_prompt.trim()) {
+      return res.status(400).json({ error: 'draft_user_prompt is required.' });
+    }
+
     const model = genAI.getGenerativeModel({
-      model: "gemini-2.5-flash"
+      model: "gemini-3.1-flash-lite",
+      generationConfig: {
+        temperature: 0.4,
+        maxOutputTokens: 500,
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: 'object',
+          properties: {
+            suggestions: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  suggestion: { type: 'string' },
+                  based_on: { type: 'string' },
+                },
+                required: ['suggestion', 'based_on'],
+              },
+            },
+          },
+          required: ['suggestions'],
+        },
+      },
     });
 
     const examplesText = retrieved_examples.length
@@ -109,9 +135,7 @@ Similarity: ${v.score}
       : 'No similar versions found';
 
     const prompt = `
-You are an expert prompt engineer.
-
-Analyze the draft prompt and provide improvement suggestions.
+You are an expert prompt engineer helping a user improve a draft prompt by learning from their own past prompt-writing patterns.
 
 CURRENT DRAFT
 
@@ -121,24 +145,18 @@ ${draft_system_prompt || 'None'}
 User Prompt:
 ${draft_user_prompt}
 
-SIMILAR PREVIOUS VERSIONS
+SIMILAR PREVIOUS VERSIONS FROM THE USER'S OWN HISTORY
 
 ${examplesText}
 
-Return ONLY valid JSON.
+Based on patterns you notice in the user's past prompts (tone, constraints, output format, variables), suggest 2-4 specific, actionable improvements to the draft. Reference a specific version (e.g. "v2") in based_on when a suggestion is grounded in one of the similar previous versions above; otherwise use "general best practice".
 
+Return ONLY valid JSON matching this shape:
 {
   "suggestions": [
-    {
-      "title": "Short title",
-      "explanation": "Detailed explanation"
-    }
+    { "suggestion": "<specific actionable suggestion>", "based_on": "<version name or 'general best practice'>" }
   ]
 }
-
-Do not return markdown.
-Do not return code fences.
-Do not return any text outside JSON.
 `;
 
     const result = await model.generateContent(prompt);
@@ -165,9 +183,9 @@ Do not return any text outside JSON.
         .split(/\n\n+/)
         .filter(line => line.trim().length > 20)
         .slice(0, 5)
-        .map((line, index) => ({
-          title: `Suggestion ${index + 1}`,
-          explanation: line.trim()
+        .map((line) => ({
+          suggestion: line.trim(),
+          based_on: 'general best practice',
         }));
 
       return res.json({
@@ -175,8 +193,8 @@ Do not return any text outside JSON.
           ? suggestions
           : [
               {
-                title: "AI Analysis",
-                explanation: text
+                suggestion: text,
+                based_on: 'general best practice',
               }
             ]
       });
@@ -184,6 +202,16 @@ Do not return any text outside JSON.
 
   } catch (error) {
     console.error("Suggestion Error:", error);
+
+    if (error.message?.includes('API_KEY')) {
+      return res.status(401).json({ error: 'Invalid Gemini API key.' });
+    }
+    if (error.message?.includes('quota')) {
+      return res.status(429).json({ error: 'Gemini API quota exceeded.' });
+    }
+    if (error.status === 503 || error.message?.includes('503') || error.message?.includes('overloaded') || error.message?.includes('high demand')) {
+      return res.status(503).json({ error: 'Gemini is temporarily overloaded. Please try again in a moment.' });
+    }
 
     return res.status(500).json({
       error: "Failed to generate suggestions"

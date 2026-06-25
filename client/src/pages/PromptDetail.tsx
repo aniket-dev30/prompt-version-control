@@ -595,21 +595,22 @@ setShowSuggestions(true)
             borderRadius: '0.4rem',
             borderLeft: '3px solid #818cf8'
           }}>
-<h4 style={{
-  margin: '0 0 0.5rem 0',
-  color: '#818cf8',
-  fontSize: '0.85rem'
+<p style={{
+  margin: '0 0 0.3rem 0',
+  color: '#e5e7eb',
+  fontSize: '0.85rem',
+  lineHeight: '1.4'
 }}>
-  {s.title}
-</h4>
+  {s.suggestion}
+</p>
 
 <p style={{
   margin: 0,
-  color: '#e5e7eb',
-  fontSize: '0.8rem',
-  whiteSpace: 'pre-wrap'
+  color: '#9ca3af',
+  fontSize: '0.75rem',
+  fontStyle: 'italic'
 }}>
-  {s.explanation}
+  Based on: {s.based_on}
 </p>
           </div>
         ))}
